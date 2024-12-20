@@ -68,6 +68,7 @@ namespace kpeg
             
             /// Parse the quantization tables specified in the JFIF file
             void parseDQTSegment();
+            void parseDQTSegment_SIMD();
             
             /// Parse the Start of File segment
             ResultCode parseSOF0Segment();
