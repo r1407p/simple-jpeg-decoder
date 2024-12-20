@@ -1,6 +1,9 @@
 /// Implementation of the decoder
 
 #include <arpa/inet.h> // htons
+#include <immintrin.h>
+#include <chrono>
+
 #include <iomanip>
 #include <sstream>
 
@@ -59,7 +62,7 @@ namespace kpeg
             case JFIF_SOI  : logFile  << "Found segment, Start of Image (FFD8)" << std::endl; return ResultCode::SUCCESS;
             case JFIF_APP0 : logFile  << "Found segment, JPEG/JFIF Image Marker segment (APP0)" << std::endl; parseAPP0Segment(); return ResultCode::SUCCESS;
             case JFIF_COM  : logFile  << "Found segment, Comment(FFFE)" << std::endl; parseCOMSegment(); return ResultCode::SUCCESS;
-            case JFIF_DQT  : logFile  << "Found segment, Define Quantization Table (FFDB)" << std::endl; parseDQTSegment(); return ResultCode::SUCCESS;
+            case JFIF_DQT  : logFile  << "Found segment, Define Quantization Table (FFDB)" << std::endl; parseDQTSegment_SIMD(); return ResultCode::SUCCESS;
             case JFIF_SOF0 : logFile  << "Found segment, Start of Frame 0: Baseline DCT (FFC0)" << std::endl; return parseSOF0Segment();
             case JFIF_SOF1 : logFile << "Found segment, Start of Frame 1: Extended Sequential DCT (FFC1), Not supported" << std::endl; return ResultCode::TERMINATE;
             case JFIF_SOF2 : logFile << "Found segment, Start of Frame 2: Progressive DCT (FFC2), Not supported" << std::endl; return ResultCode::TERMINATE;
@@ -260,6 +263,65 @@ namespace kpeg
         logFile << "Finished parsing quantization table segment [OK]" << std::endl;
     }
     
+    void Decoder::parseDQTSegment_SIMD()
+    {
+        if (!m_imageFile.is_open() || !m_imageFile.good())
+        {
+            logFile << "Unable scan image file: \'" + m_filename + "\'" << std::endl;
+            return;
+        }
+
+        logFile << "Parsing quantization table segment..." << std::endl;
+        
+        UInt16 lenByte = 0;
+        UInt8 PqTq;
+        
+        m_imageFile.read(reinterpret_cast<char *>(&lenByte), 2);
+        lenByte = htons(lenByte);
+        logFile << "Quantization table segment length: " << (int)lenByte << std::endl;
+
+        lenByte -= 2;
+
+        for (int qt = 0; qt < int(lenByte) / 65; ++qt)
+        {
+            m_imageFile >> std::noskipws >> PqTq;
+
+            int precision = PqTq >> 4; 
+            int QTtable = PqTq & 0x0F; 
+
+            logFile << "Quantization Table Number: " << QTtable << std::endl;
+            logFile << "Quantization Table #" << QTtable << " precision: " << (precision == 0 ? "8-bit" : "16-bit") << std::endl;
+
+            m_QTables.push_back({});
+
+
+            UInt8 input[16];
+            UInt16 table[64];
+            for (int i = 0; i < 64; i += 16)
+            {
+                m_imageFile.read(reinterpret_cast<char*>(input), 16); 
+                __m128i data = _mm_loadu_si128(reinterpret_cast<__m128i*>(input)); 
+                __m128i zero = _mm_setzero_si128(); 
+
+                
+                __m128i low = _mm_unpacklo_epi8(data, zero);
+                __m128i high = _mm_unpackhi_epi8(data, zero);
+
+                
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(&table[i]), low);
+                _mm_storeu_si128(reinterpret_cast<__m128i*>(&table[i + 8]), high);
+            }
+
+            
+            for (int i = 0; i < 64; ++i)
+            {
+                m_QTables[QTtable].push_back(table[i]);
+            }
+        }
+        
+        logFile << "Finished parsing quantization table segment [OK]" << std::endl;
+    }
+
     Decoder::ResultCode Decoder::parseSOF0Segment()
     {
         if (!m_imageFile.is_open() || !m_imageFile.good())

@@ -2,7 +2,7 @@
 
 #include "Utility.hpp"
 #include "Decoder.hpp"
-
+#include <chrono>
 
 void printHelp()
 {
@@ -53,7 +53,11 @@ int handleInput(int argc, char** argv)
     }
     else if ( argc == 2 )
     {
+        auto start = std::chrono::high_resolution_clock::now();
         decodeJPEG( argv[1] );
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = end - start;
+        std::cout << "Elapsed time: " << elapsed.count() << " seconds" << std::endl;
         return EXIT_SUCCESS;
     }
     
